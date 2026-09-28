@@ -1,0 +1,121 @@
+// massier87shell — context menu (right click on a taskbar app), drawn with the bar's Theme.
+
+import { Theme } from "bar.slint";
+
+export struct MenuItem {
+    icon: string,
+    text: string,
+    danger: bool,
+    separator: bool,
+}
+
+component Glyph inherits Text {
+    font-family: Theme.icon-font;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+export component ContextMenu inherits Window {
+    title: "massier87shell — Menu";
+    no-frame: true;
+    always-on-top: true;
+    width: 250px;
+    height: layout.preferred-height;
+    background: Theme.background.with-alpha(Theme.glass);
+
+    in property <string> heading;
+    in property <image> heading-icon;
+    in property <[MenuItem]> items;
+    // Toggled by Rust right after showing, to play the open animation.
+    in-out property <bool> open;
+
+    callback chosen(int);
+    callback dismiss();
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    Rectangle {
+        opacity: root.open ? 1 : 0;
+        y: root.open ? 0 : -8px;
+        animate opacity { duration: 150ms * Theme.motion; }
+        animate y { duration: 220ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+
+        layout := VerticalLayout {
+            padding: 6px;
+            spacing: 2px;
+
+            HorizontalLayout {
+                padding: 8px;
+                padding-bottom: 6px;
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: root.heading-icon;
+                        width: 20px;
+                        height: 20px;
+                        image-rendering: smooth;
+                    }
+                }
+                Text {
+                    text: root.heading;
+                    font-family: Theme.font-family;
+                    font-size: 13px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground;
+                    horizontal-stretch: 1;
+                }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.surface;
+            }
+
+            for item[i] in root.items: Rectangle {
+                height: item.separator ? 9px : 34px;
+                border-radius: 8px;
+                background: item.separator ? transparent
+                    : item-ta.pressed ? Theme.surface.darker(0.1) : item-ta.has-hover ? Theme.surface : transparent;
+                animate background { duration: 100ms * Theme.motion; }
+                if item.separator: Rectangle {
+                    y: 4px;
+                    height: 1px;
+                    background: Theme.surface;
+                }
+                if !item.separator: HorizontalLayout {
+                    padding-left: 10px;
+                    spacing: 12px;
+                    Glyph {
+                        text: item.icon;
+                        font-size: 13px;
+                        width: 16px;
+                        color: item.danger ? Theme.urgent : Theme.foreground-dim;
+                    }
+                    Text {
+                        text: item.text;
+                        font-family: Theme.font-family;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        color: item.danger ? Theme.urgent : Theme.foreground;
+                    }
+                }
+                item-ta := TouchArea {
+                    enabled: !item.separator;
+                    mouse-cursor: pointer;
+                    clicked => { root.chosen(i); }
+                }
+            }
+        }
+    }
+}

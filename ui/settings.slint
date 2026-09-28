@@ -1,0 +1,1434 @@
+// massier87shell — settings window. It shares the bar's `Theme` global, so it follows the
+// same preset/accent. Every change is applied to the bar live and auto-saved by Rust.
+
+import { Theme } from "bar.slint";
+
+export struct ColorRow {
+    label: string,
+    hex: string,
+    preview: color,
+    overridden: bool,
+}
+
+export struct Swatch {
+    hex: string,
+    preview: color,
+}
+
+// One switchable item of the control panel (a tile or a section).
+export struct ControlOption {
+    id: string,
+    label: string,
+    icon: string,
+    enabled: bool,
+}
+
+// One row of the module editor: a section header or a module.
+export struct ModRow {
+    header: bool,
+    name: string,
+    label: string,
+    icon: string,
+    configurable: bool, // has options (the gear button)
+}
+
+// ---------- text ----------
+
+component Label inherits Text {
+    color: Theme.foreground;
+    font-family: Theme.font-family;
+    font-size: 13px;
+    vertical-alignment: center;
+}
+
+component Hint inherits Text {
+    color: Theme.foreground-dim;
+    font-family: Theme.font-family;
+    font-size: 11px;
+    wrap: word-wrap;
+}
+
+component Glyph inherits Text {
+    font-family: Theme.icon-font;
+    color: Theme.foreground;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+component SectionTitle inherits Text {
+    font-family: Theme.font-family;
+    font-size: 22px;
+    font-weight: 700;
+    color: Theme.foreground;
+}
+
+component GroupLabel inherits Text {
+    font-family: Theme.font-family;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: Theme.accent;
+}
+
+// ---------- controls (all drawn with the bar's theme) ----------
+
+component TSwitch {
+    in-out property <bool> checked;
+    callback toggled();
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 44px;
+            height: 24px;
+            border-radius: 12px;
+            background: root.checked ? Theme.accent : Theme.surface-hover;
+            animate background { duration: 180ms * Theme.motion; }
+            Rectangle {
+                width: ta.pressed ? 20px : 16px;
+                height: 16px;
+                y: 4px;
+                x: root.checked ? parent.width - self.width - 4px : 4px;
+                border-radius: 8px;
+                background: root.checked ? Theme.on-accent : Theme.foreground-dim;
+                animate x, width { duration: 220ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.checked = !root.checked;
+                    root.toggled();
+                }
+            }
+        }
+    }
+}
+
+component TSlider {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <string> unit;
+    in-out property <float> value;
+    callback changed();
+
+    property <float> ratio: clamp((root.value - root.minimum) / max(1, root.maximum - root.minimum), 0, 1);
+
+    function set-from(px: length) {
+        let v = round(root.minimum + clamp(px / track-area.width, 0, 1) * (root.maximum - root.minimum));
+        if (v != root.value) {
+            root.value = v;
+            root.changed();
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        track-area := Rectangle {
+            min-width: 180px;
+            height: 24px;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.surface-hover;
+            }
+            Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                height: 6px;
+                width: parent.width * root.ratio;
+                border-radius: 3px;
+                background: Theme.accent;
+            }
+            Rectangle {
+                property <length> size: ta.pressed ? 20px : ta.has-hover ? 18px : 16px;
+                width: self.size;
+                height: self.size;
+                x: (parent.width - self.width) * root.ratio;
+                y: (parent.height - self.height) / 2;
+                border-radius: self.size / 2;
+                background: Theme.accent;
+                border-width: 3px;
+                border-color: Theme.surface;
+                animate width, height { duration: 120ms * Theme.motion; }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        root.set-from(self.mouse-x);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.set-from(self.mouse-x);
+                    }
+                }
+                scroll-event(e) => {
+                    let v = clamp(root.value + (e.delta-y > 0 ? 1 : -1), root.minimum, root.maximum);
+                    if (v != root.value) {
+                        root.value = v;
+                        root.changed();
+                    }
+                    return accept;
+                }
+            }
+        }
+        Label {
+            text: "\{round(root.value)}\{root.unit}";
+            width: 48px;
+            horizontal-alignment: right;
+            color: Theme.foreground-dim;
+        }
+    }
+}
+
+component TComboBox {
+    in property <[string]> model;
+    in-out property <int> current-index;
+    out property <string> current-value: root.model[root.current-index];
+    callback selected(int);
+    min-width: 180px;
+
+    VerticalLayout {
+        alignment: center;
+        box := Rectangle {
+            height: 34px;
+            border-radius: 10px;
+            background: ta.has-hover ? Theme.surface-hover : Theme.background.with-alpha(Theme.glass);
+            border-width: 1px;
+            border-color: Theme.surface-hover;
+            animate background { duration: 120ms * Theme.motion; }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 10px;
+                spacing: 8px;
+                Label {
+                    text: root.current-value;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Glyph {
+                    text: "\u{E70D}";
+                    font-size: 10px;
+                    color: Theme.foreground-dim;
+                }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { popup.show(); }
+            }
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: box.y + box.height + 4px;
+        width: root.width;
+        Rectangle {
+            background: Theme.surface-solid;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.surface-hover;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: #00000060;
+            VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+                for item[i] in root.model: Rectangle {
+                    height: 30px;
+                    border-radius: 7px;
+                    background: i == root.current-index ? Theme.accent.with-alpha(0.18)
+                        : item-ta.has-hover ? Theme.surface-hover : transparent;
+                    Label {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: item;
+                        color: i == root.current-index ? Theme.accent : Theme.foreground;
+                        overflow: elide;
+                    }
+                    item-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.current-index = i;
+                            root.selected(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component TLineEdit {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback edited(string);
+    min-width: 120px;
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            height: 34px;
+            border-radius: 10px;
+            background: Theme.background.with-alpha(Theme.glass);
+            border-width: input.has-focus ? 2px : 1px;
+            border-color: input.has-focus ? Theme.accent : Theme.surface-hover;
+            clip: true;
+            if root.text == "": Label {
+                x: 12px;
+                height: parent.height;
+                text: root.placeholder;
+                color: Theme.foreground-dim.with-alpha(0.6);
+            }
+            input := TextInput {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                vertical-alignment: center;
+                single-line: true;
+                text <=> root.text;
+                color: Theme.foreground;
+                font-family: Theme.font-family;
+                font-size: 13px;
+                selection-background-color: Theme.accent.with-alpha(0.45);
+                selection-foreground-color: Theme.foreground;
+                edited => { root.edited(self.text); }
+            }
+        }
+    }
+}
+
+component TButton {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    callback clicked();
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            height: 34px;
+            min-width: content.preferred-width + 32px;
+            border-radius: 10px;
+            background: root.primary
+                ? (ta.pressed ? Theme.accent.darker(0.15) : ta.has-hover ? Theme.accent.brighter(0.08) : Theme.accent)
+                : (ta.pressed ? Theme.surface-hover.darker(0.1) : ta.has-hover ? Theme.surface-hover : Theme.background.with-alpha(Theme.glass));
+            animate background { duration: 120ms * Theme.motion; }
+            content := HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                if root.icon != "": Glyph {
+                    text: root.icon;
+                    font-size: 13px;
+                    color: root.primary ? Theme.on-accent : Theme.foreground;
+                }
+                Label {
+                    text: root.text;
+                    font-weight: 600;
+                    color: root.primary ? Theme.on-accent : Theme.foreground;
+                }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.clicked(); }
+            }
+        }
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> enabled: true;
+    in property <color> tint: Theme.foreground;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: !root.enabled ? transparent
+        : ta.pressed ? Theme.surface-hover.darker(0.1)
+        : ta.has-hover ? Theme.surface-hover : transparent;
+    Glyph {
+        text: root.icon;
+        font-size: 12px;
+        color: root.enabled ? root.tint : root.tint.with-alpha(0.25);
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ---------- layout blocks ----------
+
+// A rounded card holding a group of setting rows.
+component Card inherits Rectangle {
+    background: Theme.surface;
+    border-radius: 14px;
+    VerticalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        @children
+    }
+}
+
+// Label + optional hint on the left, the control(s) on the right.
+component Row {
+    in property <string> label;
+    in property <string> hint;
+    HorizontalLayout {
+        spacing: 20px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 3px;
+            horizontal-stretch: 1;
+            Label { text: root.label; }
+            if root.hint != "": Hint { text: root.hint; }
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            @children
+        }
+    }
+}
+
+component Separator inherits Rectangle {
+    height: 1px;
+    background: Theme.background.with-alpha(0.6);
+}
+
+component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+    height: 40px;
+    border-radius: 12px;
+    background: root.selected ? Theme.accent.with-alpha(0.16)
+        : ta.has-hover ? Theme.surface-hover.with-alpha(0.6) : transparent;
+    animate background { duration: 150ms * Theme.motion; }
+    HorizontalLayout {
+        padding-left: 14px;
+        spacing: 12px;
+        Glyph {
+            text: root.icon;
+            font-size: 16px;
+            width: 18px;
+            color: root.selected ? Theme.accent : Theme.foreground-dim;
+        }
+        Label {
+            text: root.text;
+            font-weight: root.selected ? 600 : 400;
+            color: root.selected ? Theme.accent : Theme.foreground;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component CaptionButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> danger;
+    callback clicked();
+    width: 46px;
+    background: ta.pressed ? (root.danger ? #c42b1c : Theme.surface-hover.darker(0.1))
+        : ta.has-hover ? (root.danger ? #c42b1c : Theme.surface-hover) : transparent;
+    animate background { duration: 100ms * Theme.motion; }
+    Glyph {
+        text: root.icon;
+        font-size: 10px;
+        color: ta.has-hover && root.danger ? #ffffff : Theme.foreground;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// The module layout editor: one vertical list with LEFT / CENTER / RIGHT headers.
+// Rows are dragged to reorder them (also across headers, which moves a module to
+// another section). Rows are positioned by hand, not by a layout, so the other rows
+// can slide out of the way while one is being dragged.
+component ModuleList {
+    in property <[ModRow]> rows;
+    callback moved(int, int); // (row, insertion index among the other rows)
+    callback remove(int);
+    callback configure(int);
+
+    property <length> row-h: 50px;
+    property <int> dragging: -1;
+    property <length> pointer-y; // pointer position within the list while dragging
+    property <length> grab;      // where inside the row it was grabbed
+    // Rows can't be dropped above the first header.
+    property <length> ghost-y: clamp(root.pointer-y - root.grab, root.row-h, (root.rows.length - 1) * root.row-h);
+    property <int> target: clamp(round(root.ghost-y / root.row-h), 1, root.rows.length - 1);
+
+    height: root.rows.length * root.row-h;
+
+    for row[i] in root.rows: slot-rect := Rectangle {
+        property <bool> dragged: i == root.dragging;
+        // This row's index once the dragged row is taken out, then its slot with the gap.
+        property <int> rest: i < root.dragging ? i : i - 1;
+        property <int> slot: root.dragging < 0 || self.dragged ? i
+            : (self.rest < root.target ? self.rest : self.rest + 1);
+
+        x: 0;
+        width: parent.width;
+        height: root.row-h;
+        y: self.dragged ? root.ghost-y : self.slot * root.row-h;
+        z: self.dragged ? 10 : 0;
+        animate y { duration: self.dragged ? 0ms : 180ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+
+        if row.header: HorizontalLayout {
+            padding-left: 6px;
+            padding-top: 18px;
+            spacing: 8px;
+            GroupLabel {
+                text: row.label;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Rectangle {
+                    height: 1px;
+                    background: Theme.surface;
+                }
+            }
+        }
+
+        if !row.header: card := Rectangle {
+            y: 4px;
+            height: parent.height - 8px;
+            border-radius: 12px;
+            background: slot-rect.dragged ? Theme.surface-hover : drag-ta.has-hover ? Theme.surface.brighter(0.06) : Theme.surface;
+            border-width: slot-rect.dragged ? 1px : 0px;
+            border-color: Theme.accent;
+            drop-shadow-blur: slot-rect.dragged ? 18px : 0px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: #00000070;
+            animate background { duration: 120ms * Theme.motion; }
+
+            drag-ta := TouchArea {
+                mouse-cursor: root.dragging == i ? MouseCursor.grabbing : MouseCursor.grab;
+                pointer-event(e) => {
+                    if (e.button != PointerEventButton.left) {
+                        return;
+                    }
+                    if (e.kind == PointerEventKind.down) {
+                        root.grab = card.y + self.mouse-y;
+                        root.pointer-y = slot-rect.y + card.y + self.mouse-y;
+                        root.dragging = i;
+                    } else if (e.kind == PointerEventKind.up && root.dragging == i) {
+                        let to = root.target;
+                        root.dragging = -1;
+                        root.moved(i, to);
+                    }
+                }
+                moved => {
+                    if (root.dragging == i) {
+                        root.pointer-y = slot-rect.y + card.y + self.mouse-y;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 6px;
+                spacing: 12px;
+                Glyph {
+                    text: "\u{E76F}"; // gripper
+                    font-size: 12px;
+                    width: 16px;
+                    color: Theme.foreground-dim.with-alpha(0.7);
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 9px;
+                        background: Theme.accent.with-alpha(0.16);
+                        Glyph {
+                            text: row.icon;
+                            font-size: 14px;
+                            color: Theme.accent;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 1px;
+                    Label { text: row.label; }
+                    Hint { text: row.name; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    width: 28px;
+                    if row.configurable: IconButton {
+                        icon: "\u{E713}";
+                        clicked => { root.configure(i); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: "\u{E711}";
+                        tint: Theme.urgent;
+                        clicked => { root.remove(i); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- the window ----------
+
+export component SettingsWindow inherits Window {
+    title: "massier87shell — Settings";
+    no-frame: true;
+    preferred-width: 980px;
+    preferred-height: 680px;
+    min-width: 780px;
+    min-height: 500px;
+    background: Theme.background.with-alpha(Theme.glass);
+    default-font-family: Theme.font-family;
+
+    in property <color> accent; // unused by the UI (it reads Theme.accent); kept for the Rust side
+    in property <string> config-path;
+    in property <string> version;
+    in property <string> status;
+    in property <bool> is-max;
+    in property <length> max-inset;
+    in-out property <int> page: 0;
+
+    // Appearance
+    in property <[string]> presets;
+    in-out property <int> preset-index;
+    in property <[ColorRow]> colors;
+    in property <[Swatch]> accent-swatches;
+
+    // Bar
+    in-out property <int> position-index;
+    in-out property <bool> floating;
+    in-out property <float> bar-height;
+    in-out property <float> margin;
+    in-out property <int> corners-index;
+    in-out property <bool> border;
+    in-out property <float> pill-radius;
+    in-out property <bool> pill-background;
+    in-out property <float> pill-spacing;
+    in-out property <float> v-padding;
+    in-out property <float> edge-padding;
+    in-out property <string> font;
+    in-out property <float> font-size;
+    in-out property <int> renderer-index;
+    in-out property <int> monitors-index;
+    in-out property <bool> autostart;
+    in-out property <bool> drag-windows;
+    in-out property <bool> hide-windows-taskbar;
+    in-out property <string> taskbar-hotkey;
+    in property <string> taskbar-hotkey-error;
+
+    // Modules
+    in property <[ModRow]> module-rows;
+    in property <[string]> available-modules;
+
+    // Widgets
+    in-out property <string> clock-format;
+    in property <string> clock-preview;
+    in-out property <float> window-max-width;
+    in-out property <float> media-max-width;
+    in-out property <float> volume-step;
+    in-out property <float> icon-size;
+    in-out property <bool> monochrome;
+    in-out property <int> temp-unit-index;
+    in-out property <int> stats-interval-index;
+    in-out property <int> taskview-trigger-index;
+    in-out property <float> taskview-delay;
+    in property <[ControlOption]> control-options; // tiles
+    in property <[ControlOption]> control-sections;
+    // The module whose options page (page 5) is open.
+    in-out property <string> editing;
+    in-out property <string> editing-label;
+    in-out property <string> editing-icon;
+    callback control-option-toggled(string, bool);
+    in-out property <bool> anim-enabled;
+    in-out property <float> anim-speed; // percent
+    in-out property <bool> anim-hover;
+    in-out property <float> bar-opacity; // percent
+    in-out property <float> panel-opacity; // percent
+    in-out property <int> blur-index;
+    in-out property <bool> accent-wallpaper;
+
+    callback changed();
+    callback autostart-toggled(bool);
+    callback color-edited(int, string);
+    callback color-reset(int);
+    callback swatch-picked(string);
+    callback module-add(int, string);
+    callback module-drop(int, int);
+    callback module-remove-row(int);
+    callback open-config-file();
+    callback reset-defaults();
+
+    // custom title bar
+    callback start-drag();
+    callback start-resize(int);
+    callback minimize();
+    callback toggle-maximize();
+    callback close-window();
+
+    function go(p: int) {
+        root.page = p;
+        flick.content-y = 0;
+    }
+
+    VerticalLayout {
+        padding: root.is-max ? root.max-inset : 0px;
+        HorizontalLayout {
+            // ---- sidebar ----
+            Rectangle {
+                width: 240px;
+                background: Theme.glass < 1 ? #00000030 : Theme.background.darker(0.12);
+                // No visible title bar: the top edge of the window is the drag area.
+                TouchArea {
+                    y: 0;
+                    height: 48px;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            root.start-drag();
+                        }
+                    }
+                    double-clicked => { root.toggle-maximize(); }
+                }
+                VerticalLayout {
+                    padding: 14px;
+                    padding-top: 22px;
+                    spacing: 4px;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-bottom: 22px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 34px;
+                                height: 34px;
+                                border-radius: 10px;
+                                background: Theme.accent;
+                                Text {
+                                    text: "87";
+                                    font-weight: 800;
+                                    font-size: 13px;
+                                    color: Theme.on-accent;
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: "massier87shell";
+                                font-size: 16px;
+                                font-weight: 700;
+                                color: Theme.foreground;
+                            }
+                            Hint { text: "Settings · v" + root.version; }
+                        }
+                    }
+                    NavItem { icon: "\u{E790}"; text: "Appearance"; selected: root.page == 0; clicked => { root.go(0); } }
+                    NavItem { icon: "\u{E7F4}"; text: "Bar"; selected: root.page == 1; clicked => { root.go(1); } }
+                    NavItem { icon: "\u{F0E2}"; text: "Modules"; selected: root.page == 2 || root.page == 5; clicked => { root.go(2); } }
+                    NavItem { icon: "\u{E946}"; text: "About"; selected: root.page == 4; clicked => { root.go(4); } }
+                    Rectangle { vertical-stretch: 1; }
+                    if root.status != "": Rectangle {
+                        height: 34px;
+                        border-radius: 10px;
+                        background: Theme.surface.with-alpha(0.6);
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            spacing: 8px;
+                            Glyph {
+                                text: "\u{E73E}";
+                                font-size: 12px;
+                                color: Theme.accent;
+                            }
+                            Hint {
+                                text: root.status;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Hairline divider between sidebar and content.
+            Rectangle {
+                width: 1px;
+                background: Theme.surface.with-alpha(0.7);
+            }
+
+            // ---- pages ----
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.glass < 1 ? transparent : Theme.background;
+                VerticalLayout {
+                    // Invisible title bar: a drag strip with the window buttons floating on it.
+                    Rectangle {
+                        height: 40px;
+                        TouchArea {
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                                    root.start-drag();
+                                }
+                            }
+                            double-clicked => { root.toggle-maximize(); }
+                        }
+                        HorizontalLayout {
+                            alignment: end;
+                            CaptionButton {
+                                icon: "\u{E921}";
+                                clicked => { root.minimize(); }
+                            }
+                            CaptionButton {
+                                icon: root.is-max ? "\u{E923}" : "\u{E922}";
+                                clicked => { root.toggle-maximize(); }
+                            }
+                            CaptionButton {
+                                icon: "\u{E8BB}";
+                                danger: true;
+                                clicked => { root.close-window(); }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        flick := Flickable {
+                            // Wheel scrolling only: dragging is for the module list.
+                            interactive: false;
+                            content-height: max(self.height, pages.preferred-height);
+                            pages := VerticalLayout {
+                                width: flick.width;
+                                padding: 28px;
+                                padding-top: 4px;
+                                spacing: 12px;
+                                alignment: start;
+
+                                // ---- Appearance ----
+                                if root.page == 0: VerticalLayout {
+                                    spacing: 12px;
+                                    SectionTitle { text: "Appearance"; }
+                                    GroupLabel { text: "THEME"; }
+                                    Card {
+                                        Row {
+                                            label: "Preset";
+                                            hint: "Base palette. 'system' follows your Windows accent color.";
+                                            TComboBox {
+                                                model: root.presets;
+                                                current-index <=> root.preset-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Accent from wallpaper";
+                                            hint: "Picks the accent from your desktop wallpaper and follows it when the wallpaper changes.";
+                                            TSwitch { checked <=> root.accent-wallpaper; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Accent";
+                                            hint: root.accent-wallpaper ? "Taken from the wallpaper (turn that off to pick one)." : "Quick picks; overrides the preset's accent.";
+                                            for s in root.accent-swatches: VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    width: 26px;
+                                                    height: 26px;
+                                                    border-radius: 13px;
+                                                    background: s.preview;
+                                                    border-width: sw-ta.has-hover ? 3px : 0px;
+                                                    border-color: Theme.foreground;
+                                                    animate border-width { duration: 100ms * Theme.motion; }
+                                                    sw-ta := TouchArea {
+                                                        mouse-cursor: pointer;
+                                                        clicked => { root.swatch-picked(s.hex); }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    GroupLabel { text: "TRANSPARENCY"; }
+                                    Card {
+                                        Row {
+                                            label: "Bar opacity";
+                                            hint: "Lower lets the desktop show through the bar.";
+                                            TSlider { minimum: 0; maximum: 100; unit: "%"; value <=> root.bar-opacity; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Window opacity";
+                                            hint: "Settings, control panel, tray, sound, power and right-click menus.";
+                                            TSlider { minimum: 40; maximum: 100; unit: "%"; value <=> root.panel-opacity; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Background effect";
+                                            hint: "What shows through translucent backgrounds.";
+                                            TComboBox {
+                                                model: ["Clear", "Blur", "Acrylic"];
+                                                current-index <=> root.blur-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                    }
+                                    GroupLabel { text: "ANIMATIONS"; }
+                                    Card {
+                                        Row {
+                                            label: "Animations";
+                                            hint: "Slides, fades and hover transitions everywhere in the bar.";
+                                            TSwitch { checked <=> root.anim-enabled; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Speed";
+                                            hint: "100% is normal; higher is faster.";
+                                            TSlider { minimum: 25; maximum: 300; unit: "%"; value <=> root.anim-speed; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Hover effects";
+                                            hint: "Icons grow slightly under the mouse.";
+                                            TSwitch { checked <=> root.anim-hover; toggled => { root.changed(); } }
+                                        }
+                                    }
+                                    GroupLabel { text: "COLORS"; }
+                                    Card {
+                                        for c[i] in root.colors: VerticalLayout {
+                                            if i > 0: Separator { }
+                                            Row {
+                                                label: c.label;
+                                                hint: c.overridden ? "Custom" : "From preset";
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    Rectangle {
+                                                        width: 34px;
+                                                        height: 34px;
+                                                        border-radius: 10px;
+                                                        border-width: 1px;
+                                                        border-color: Theme.surface-hover;
+                                                        background: c.preview;
+                                                    }
+                                                }
+                                                TLineEdit {
+                                                    width: 130px;
+                                                    text: c.hex;
+                                                    placeholder: "#rrggbb";
+                                                    edited(t) => { root.color-edited(i, t); }
+                                                }
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    IconButton {
+                                                        icon: "\u{E777}";
+                                                        enabled: c.overridden;
+                                                        clicked => { root.color-reset(i); }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ---- Bar ----
+                                if root.page == 1: VerticalLayout {
+                                    spacing: 12px;
+                                    SectionTitle { text: "Bar"; }
+                                    GroupLabel { text: "SYSTEM"; }
+                                    Card {
+                                        Row {
+                                            label: "Start with Windows";
+                                            hint: "Launch the bar automatically when you sign in.";
+                                            TSwitch {
+                                                checked <=> root.autostart;
+                                                toggled => { root.autostart-toggled(self.checked); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Drag to move windows";
+                                            hint: "Dragging empty bar space grabs the maximized window below, like its title bar.";
+                                            TSwitch { checked <=> root.drag-windows; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Hide Windows taskbar";
+                                            hint: "Hides it completely and frees its space; remembered across restarts. It comes back while the bar is closed.";
+                                            TSwitch { checked <=> root.hide-windows-taskbar; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Show / hide shortcut";
+                                            hint: root.taskbar-hotkey-error != "" ? root.taskbar-hotkey-error
+                                                : "Turns the setting above on or off, e.g. Ctrl+Win+B. Leave empty for none.";
+                                            TLineEdit {
+                                                width: 180px;
+                                                text <=> root.taskbar-hotkey;
+                                                placeholder: "Ctrl+Win+B";
+                                                edited => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Displays";
+                                            hint: "Show the bar on the primary display only, or on every display.";
+                                            TComboBox {
+                                                model: ["Primary display", "All displays"];
+                                                current-index <=> root.monitors-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                    }
+                                    GroupLabel { text: "PLACEMENT"; }
+                                    Card {
+                                        Row {
+                                            label: "Position";
+                                            TComboBox {
+                                                model: ["Top", "Bottom"];
+                                                current-index <=> root.position-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Floating";
+                                            hint: "Detach the bar from the screen edge.";
+                                            TSwitch { checked <=> root.floating; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Margin";
+                                            hint: "Gap around a floating bar.";
+                                            TSlider { minimum: 0; maximum: 40; unit: "px"; value <=> root.margin; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Height";
+                                            TSlider { minimum: 24; maximum: 72; unit: "px"; value <=> root.bar-height; changed => { root.changed(); } }
+                                        }
+                                    }
+                                    GroupLabel { text: "SHAPE"; }
+                                    Card {
+                                        Row {
+                                            label: "Window corners";
+                                            hint: "Windows 11 rounded corners (floating only).";
+                                            TComboBox {
+                                                model: ["Round", "Small", "Square"];
+                                                current-index <=> root.corners-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Window border";
+                                            TSwitch { checked <=> root.border; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Pill backgrounds";
+                                            hint: "Off gives a minimal text-only look.";
+                                            TSwitch { checked <=> root.pill-background; toggled => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Pill radius";
+                                            TSlider { minimum: 0; maximum: 24; unit: "px"; value <=> root.pill-radius; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Spacing";
+                                            hint: "Gap between pills.";
+                                            TSlider { minimum: 0; maximum: 24; unit: "px"; value <=> root.pill-spacing; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Vertical padding";
+                                            TSlider { minimum: 0; maximum: 16; unit: "px"; value <=> root.v-padding; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Edge padding";
+                                            hint: "Space at the left and right ends.";
+                                            TSlider { minimum: 0; maximum: 40; unit: "px"; value <=> root.edge-padding; changed => { root.changed(); } }
+                                        }
+                                    }
+                                    GroupLabel { text: "TEXT"; }
+                                    Card {
+                                        Row {
+                                            label: "Font";
+                                            hint: "Any installed font family name.";
+                                            TLineEdit {
+                                                width: 220px;
+                                                text <=> root.font;
+                                                edited => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Font size";
+                                            TSlider { minimum: 9; maximum: 20; unit: "px"; value <=> root.font-size; changed => { root.changed(); } }
+                                        }
+                                    }
+                                    GroupLabel { text: "PERFORMANCE"; }
+                                    Card {
+                                        Row {
+                                            label: "Renderer";
+                                            hint: "Software is lightest for a bar. Applies after restarting the bar.";
+                                            TComboBox {
+                                                model: ["Software", "Skia (Direct3D)", "FemtoVG (OpenGL)"];
+                                                current-index <=> root.renderer-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ---- Modules ----
+                                if root.page == 2: VerticalLayout {
+                                    spacing: 12px;
+                                    SectionTitle { text: "Modules"; }
+                                    Hint { text: "Drag modules to reorder them, or across a header to move them to another part of the bar. The gear opens a module's options."; }
+                                    ModuleList {
+                                        rows: root.module-rows;
+                                        moved(from, to) => { root.module-drop(from, to); }
+                                        remove(index) => { root.module-remove-row(index); }
+                                        configure(index) => {
+                                            root.editing = root.module-rows[index].name;
+                                            root.editing-label = root.module-rows[index].label;
+                                            root.editing-icon = root.module-rows[index].icon;
+                                            root.go(5);
+                                        }
+                                    }
+                                    GroupLabel { text: "ADD A MODULE"; }
+                                    Card {
+                                        Row {
+                                            label: "Module";
+                                            add-picker := TComboBox {
+                                                model: root.available-modules;
+                                                min-width: 160px;
+                                            }
+                                            add-section := TComboBox {
+                                                model: ["Left", "Center", "Right"];
+                                                min-width: 120px;
+                                            }
+                                            TButton {
+                                                text: "Add";
+                                                icon: "\u{E710}";
+                                                primary: true;
+                                                clicked => { root.module-add(add-section.current-index, add-picker.current-value); }
+                                            }
+                                        }
+                                    }
+                                }
+
+
+                                // ---- Module options (the gear on a module row) ----
+                                if root.page == 5: VerticalLayout {
+                                    spacing: 12px;
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: start;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            IconButton {
+                                                icon: "\u{E72B}";
+                                                clicked => { root.go(2); }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 34px;
+                                                height: 34px;
+                                                border-radius: 10px;
+                                                background: Theme.accent.with-alpha(0.16);
+                                                Glyph {
+                                                    text: root.editing-icon;
+                                                    font-size: 15px;
+                                                    color: Theme.accent;
+                                                }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 1px;
+                                            SectionTitle { text: root.editing-label; }
+                                            Hint { text: "Modules › " + root.editing-label; }
+                                        }
+                                    }
+
+                                    if root.editing == "clock": GroupLabel { text: "FORMAT"; }
+                                    if root.editing == "clock": Card {
+                                        Row {
+                                            label: "Format";
+                                            hint: "%H hour · %M minute · %a weekday · %d day · %b month · %I 12h · %p AM/PM";
+                                            TLineEdit {
+                                                width: 220px;
+                                                text <=> root.clock-format;
+                                                edited => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Preview";
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    height: 30px;
+                                                    width: preview.preferred-width + 24px;
+                                                    border-radius: Theme.pill-radius;
+                                                    background: Theme.background;
+                                                    preview := Label {
+                                                        text: root.clock-preview;
+                                                        font-weight: 600;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if root.editing == "taskbar": GroupLabel { text: "ICONS"; }
+                                    if root.editing == "taskbar": Card {
+                                        Row {
+                                            label: "Icon size";
+                                            TSlider { minimum: 14; maximum: 36; unit: "px"; value <=> root.icon-size; changed => { root.changed(); } }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Monochrome icons";
+                                            hint: "Draw app icons in the theme's text color.";
+                                            TSwitch { checked <=> root.monochrome; toggled => { root.changed(); } }
+                                        }
+                                    }
+                                    if root.editing == "taskbar": Hint {
+                                        text: "Right-click an app on the bar to pin or unpin it; drag apps to reorder them.";
+                                    }
+
+                                    if root.editing == "temp": GroupLabel { text: "TEMPERATURE"; }
+                                    if root.editing == "temp": Card {
+                                        Row {
+                                            label: "Unit";
+                                            hint: "Shows the NVIDIA GPU temperature. Windows only exposes CPU sensors to admin tools.";
+                                            TComboBox {
+                                                model: ["Celsius (°C)", "Fahrenheit (°F)"];
+                                                current-index <=> root.temp-unit-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                    }
+
+                                    if root.editing == "cpu" || root.editing == "ram" || root.editing == "temp" || root.editing == "battery": GroupLabel { text: "UPDATES"; }
+                                    if root.editing == "cpu" || root.editing == "ram" || root.editing == "temp" || root.editing == "battery": Card {
+                                        Row {
+                                            label: "Refresh";
+                                            hint: "Shared by CPU, memory, temperature and battery. Slower uses less power.";
+                                            TComboBox {
+                                                model: ["Every 0.5 s", "Every 1 s", "Every 2 s", "Every 3 s", "Every 5 s", "Every 10 s"];
+                                                current-index <=> root.stats-interval-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                    }
+
+                                    if root.editing == "taskview": GroupLabel { text: "BEHAVIOR"; }
+                                    if root.editing == "taskview": Card {
+                                        Row {
+                                            label: "Open Task View";
+                                            hint: "How the module opens Windows Task View.";
+                                            TComboBox {
+                                                model: ["On click", "On hover"];
+                                                current-index <=> root.taskview-trigger-index;
+                                                selected => { root.changed(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Hover delay";
+                                            hint: "How long to hover before it opens (hover mode).";
+                                            TSlider { minimum: 100; maximum: 1500; unit: "ms"; value <=> root.taskview-delay; changed => { root.changed(); } }
+                                        }
+                                    }
+
+                                    if root.editing == "window": GroupLabel { text: "SIZE"; }
+                                    if root.editing == "window": Card {
+                                        Row {
+                                            label: "Title max width";
+                                            hint: "Longer titles are shortened with an ellipsis.";
+                                            TSlider { minimum: 100; maximum: 800; unit: "px"; value <=> root.window-max-width; changed => { root.changed(); } }
+                                        }
+                                    }
+
+                                    if root.editing == "media": GroupLabel { text: "SIZE"; }
+                                    if root.editing == "media": Card {
+                                        Row {
+                                            label: "Title max width";
+                                            hint: "Longer titles are shortened with an ellipsis.";
+                                            TSlider { minimum: 100; maximum: 600; unit: "px"; value <=> root.media-max-width; changed => { root.changed(); } }
+                                        }
+                                    }
+
+                                    if root.editing == "volume": GroupLabel { text: "SCROLLING"; }
+                                    if root.editing == "volume": Card {
+                                        Row {
+                                            label: "Scroll step";
+                                            hint: "How much one mouse-wheel notch on the module changes the volume.";
+                                            TSlider { minimum: 1; maximum: 10; unit: "%"; value <=> root.volume-step; changed => { root.changed(); } }
+                                        }
+                                    }
+
+                                    if root.editing == "control": GroupLabel { text: "TILES"; }
+                                    if root.editing == "control": Card {
+                                        for o[i] in root.control-options: VerticalLayout {
+                                            if i > 0: Separator { }
+                                            Row {
+                                                label: o.label;
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    Text {
+                                                        text: o.icon;
+                                                        font-family: Theme.icon-font;
+                                                        font-size: 14px;
+                                                        color: Theme.foreground-dim;
+                                                    }
+                                                }
+                                                TSwitch {
+                                                    checked: o.enabled;
+                                                    toggled => { root.control-option-toggled(o.id, self.checked); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if root.editing == "control": GroupLabel { text: "SECTIONS"; }
+                                    if root.editing == "control": Card {
+                                        for o[i] in root.control-sections: VerticalLayout {
+                                            if i > 0: Separator { }
+                                            Row {
+                                                label: o.label;
+                                                TSwitch {
+                                                    checked: o.enabled;
+                                                    toggled => { root.control-option-toggled(o.id, self.checked); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ---- About ----
+                                if root.page == 4: VerticalLayout {
+                                    spacing: 12px;
+                                    SectionTitle { text: "About"; }
+                                    Card {
+                                        Row {
+                                            label: "massier87shell";
+                                            hint: "Version " + root.version + " · MIT license";
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Config file";
+                                            hint: root.config-path;
+                                            TButton {
+                                                text: "Open in editor";
+                                                icon: "\u{E8E5}";
+                                                clicked => { root.open-config-file(); }
+                                            }
+                                        }
+                                        Separator { }
+                                        Row {
+                                            label: "Reset everything";
+                                            hint: "Restore the default configuration.";
+                                            TButton {
+                                                text: "Reset to defaults";
+                                                icon: "\u{E777}";
+                                                clicked => { root.reset-defaults(); }
+                                            }
+                                        }
+                                    }
+                                    Hint {
+                                        text: "Changes apply to the bar instantly and are saved automatically. Open this window from the gear in the quick-settings panel.";
+                                    }
+                                }
+                            }
+                        }
+
+                        // Slim scroll indicator
+                        if flick.content-height > flick.height: Rectangle {
+                            x: parent.width - 8px;
+                            width: 4px;
+                            height: max(30px, flick.height * flick.height / flick.content-height);
+                            y: (flick.height - self.height) * (-flick.content-y / (flick.content-height - flick.height));
+                            border-radius: 2px;
+                            background: Theme.foreground-dim.with-alpha(0.35);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- resize handles (the window has no native frame) ----
+    // Directions: 0 N, 1 S, 2 E, 3 W, 6 SE, 7 SW
+    if !root.is-max: TouchArea {
+        x: 0;
+        y: 0;
+        width: 6px;
+        height: root.height;
+        mouse-cursor: ew-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(3); } }
+    }
+    if !root.is-max: TouchArea {
+        x: root.width - 6px;
+        y: 0;
+        width: 6px;
+        height: root.height;
+        mouse-cursor: ew-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(2); } }
+    }
+    if !root.is-max: TouchArea {
+        x: 0;
+        y: root.height - 6px;
+        width: root.width;
+        height: 6px;
+        mouse-cursor: ns-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(1); } }
+    }
+    if !root.is-max: TouchArea {
+        x: 0;
+        y: 0;
+        width: root.width - 150px;
+        height: 4px;
+        mouse-cursor: ns-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(0); } }
+    }
+    if !root.is-max: TouchArea {
+        x: root.width - 12px;
+        y: root.height - 12px;
+        width: 12px;
+        height: 12px;
+        mouse-cursor: nwse-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(6); } }
+    }
+    if !root.is-max: TouchArea {
+        x: 0;
+        y: root.height - 12px;
+        width: 12px;
+        height: 12px;
+        mouse-cursor: nesw-resize;
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.start-resize(7); } }
+    }
+}

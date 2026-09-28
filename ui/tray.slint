@@ -1,0 +1,162 @@
+// massier87shell — background apps panel: every tray icon, with a pin toggle that keeps an
+// icon directly on the bar. Drops down from the tray module's button, like the power menu.
+
+import { Theme, TrayItem } from "bar.slint";
+
+component Glyph inherits Text {
+    font-family: Theme.icon-font;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+component PinButton inherits Rectangle {
+    in property <bool> pinned;
+    callback clicked();
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: ta.pressed ? Theme.surface-hover.darker(0.1) : ta.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: 120ms * Theme.motion; }
+    Glyph {
+        // Pin / Unpin
+        text: root.pinned ? "\u{E77A}" : "\u{E718}";
+        font-size: 13px;
+        color: root.pinned ? Theme.accent : Theme.foreground-dim;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component TrayMenu inherits Window {
+    title: "massier87shell — Background apps";
+    no-frame: true;
+    always-on-top: true;
+    width: 320px;
+    height: min(layout.preferred-height, 520px);
+    background: Theme.background.with-alpha(Theme.glass);
+
+    in property <[TrayItem]> items;
+    // Toggled by Rust right after showing, to play the open animation.
+    in-out property <bool> open;
+
+    callback activate(int, bool); // (id, right button)
+    callback toggle-pin(int);
+    callback dismiss();
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    Rectangle {
+        opacity: root.open ? 1 : 0;
+        y: root.open ? 0 : -10px;
+        animate opacity { duration: 180ms * Theme.motion; }
+        animate y { duration: 260ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+
+        layout := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-bottom: 2px;
+                Text {
+                    text: "Background apps";
+                    font-family: Theme.font-family;
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Theme.foreground;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: "\{root.items.length}";
+                    font-family: Theme.font-family;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    color: Theme.foreground-dim;
+                }
+            }
+
+            if root.items.length == 0: Text {
+                text: "No background apps with tray icons right now.";
+                font-family: Theme.font-family;
+                font-size: 12px;
+                wrap: word-wrap;
+                color: Theme.foreground-dim;
+            }
+
+            list := Flickable {
+                interactive: false;
+                height: min(rows.preferred-height, 420px);
+                content-height: rows.preferred-height;
+                rows := VerticalLayout {
+                    width: list.width;
+                    spacing: 2px;
+                    for item in root.items: Rectangle {
+                        height: 40px;
+                        border-radius: 10px;
+                        background: row-ta.pressed ? Theme.surface.darker(0.1) : row-ta.has-hover ? Theme.surface : transparent;
+                        animate background { duration: 120ms * Theme.motion; }
+                        // Left click opens the app, right click shows its own menu.
+                        row-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.up) {
+                                    if (e.button == PointerEventButton.left) { root.activate(item.id, false); }
+                                    if (e.button == PointerEventButton.right) { root.activate(item.id, true); }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 5px;
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: item.icon;
+                                    width: 20px;
+                                    height: 20px;
+                                    image-rendering: smooth;
+                                }
+                            }
+                            Text {
+                                text: item.name;
+                                font-family: Theme.font-family;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                                color: Theme.foreground;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                PinButton {
+                                    pinned: item.pinned;
+                                    clicked => { root.toggle-pin(item.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: "Pin an app to keep its icon on the bar. Right-click an app for its menu.";
+                font-family: Theme.font-family;
+                font-size: 11px;
+                wrap: word-wrap;
+                color: Theme.foreground-dim;
+            }
+        }
+    }
+}

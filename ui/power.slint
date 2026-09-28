@@ -1,0 +1,267 @@
+// massier87shell — power menu. A frameless panel that drops down from the power button,
+// drawn with the bar's `Theme`. Destructive actions need a second click to confirm.
+
+import { Theme } from "bar.slint";
+
+export enum PowerAction { lock, sleep, sign-out, restart, shutdown, hibernate }
+
+component Glyph inherits Text {
+    font-family: Theme.icon-font;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+component Tile inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> armed;          // waiting for the confirming second click
+    in property <bool> danger;         // needs confirmation
+    in property <bool> enabled: true;
+    in property <duration> armed-at; // animation-tick() when it was armed
+    callback clicked();
+
+    height: 92px;
+    border-radius: 16px;
+    opacity: root.enabled ? 1 : 0.35;
+    background: root.armed ? Theme.urgent
+        : ta.pressed ? Theme.surface-hover.darker(0.1)
+        : ta.has-hover ? Theme.surface-hover : Theme.surface;
+    animate background { duration: 150ms * Theme.motion; }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+        Glyph {
+            text: root.icon;
+            font-size: 24px;
+            color: root.armed ? Theme.background
+                : ta.has-hover ? (root.danger ? Theme.urgent : Theme.accent) : Theme.foreground;
+            animate color { duration: 150ms * Theme.motion; }
+        }
+        Text {
+            text: root.armed ? "Confirm?" : root.label;
+            font-family: Theme.font-family;
+            font-size: 12px;
+            font-weight: root.armed ? 700 : 500;
+            horizontal-alignment: center;
+            color: root.armed ? Theme.background : Theme.foreground;
+        }
+    }
+
+    // Countdown bar: the confirmation expires when it runs out.
+    if root.armed: Rectangle {
+        x: 14px;
+        y: parent.height - 10px;
+        height: 3px;
+        border-radius: 1.5px;
+        background: Theme.background.with-alpha(0.25);
+        width: parent.width - 28px;
+        Rectangle {
+            x: 0;
+            height: 3px;
+            border-radius: 1.5px;
+            background: Theme.background;
+            width: parent.width * clamp(1 - (animation-tick() - root.armed-at) / 3500ms, 0, 1);
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component FooterButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    callback clicked();
+    height: 36px;
+    border-radius: 10px;
+    background: ta.pressed ? Theme.surface-hover.darker(0.1) : ta.has-hover ? Theme.surface-hover : transparent;
+    animate background { duration: 120ms * Theme.motion; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        Glyph {
+            text: root.icon;
+            font-size: 13px;
+            color: Theme.foreground-dim;
+        }
+        Text {
+            text: root.label;
+            font-family: Theme.font-family;
+            font-size: 12px;
+            vertical-alignment: center;
+            color: Theme.foreground-dim;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component PowerMenu inherits Window {
+    title: "massier87shell — Power";
+    no-frame: true;
+    always-on-top: true;
+    width: 372px;
+    height: 360px;
+    background: Theme.background.with-alpha(Theme.glass);
+
+    in property <string> user-name;
+    in property <string> initial;
+    in property <string> uptime;
+    in property <bool> can-hibernate;
+    // Which action is waiting for confirmation (-1 = none).
+    in-out property <int> armed: -1;
+    property <duration> armed-at;
+    // Toggled by Rust right after showing, to play the open animation.
+    in-out property <bool> open;
+
+    callback run(PowerAction);
+    callback arm(int);
+    callback open-settings();
+    callback quit-bar();
+    callback dismiss();
+
+    // Actions 0-1 run immediately; 2+ need confirming.
+    function press(index: int, action: PowerAction) {
+        if (index < 2 || root.armed == index) {
+            root.armed = -1;
+            root.run(action);
+        } else {
+            root.armed-at = animation-tick();
+            root.arm(index);
+        }
+    }
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                if (root.armed >= 0) { root.armed = -1; } else { root.dismiss(); }
+                return accept;
+            }
+            reject
+        }
+    }
+
+    Rectangle {
+        opacity: root.open ? 1 : 0;
+        y: root.open ? 0 : -10px;
+        animate opacity { duration: 180ms * Theme.motion; }
+        animate y { duration: 260ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 14px;
+
+            // ---- header ----
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    background: Theme.accent;
+                    Text {
+                        text: root.initial;
+                        font-family: Theme.font-family;
+                        font-size: 18px;
+                        font-weight: 800;
+                        color: Theme.on-accent;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: root.user-name;
+                        font-family: Theme.font-family;
+                        font-size: 15px;
+                        font-weight: 700;
+                        color: Theme.foreground;
+                    }
+                    Text {
+                        text: "Up " + root.uptime;
+                        font-family: Theme.font-family;
+                        font-size: 12px;
+                        color: Theme.foreground-dim;
+                    }
+                }
+            }
+
+            // ---- action tiles ----
+            GridLayout {
+                spacing: 8px;
+                Row {
+                    Tile {
+                        icon: "\u{E72E}";
+                        label: "Lock";
+                        clicked => { root.press(0, PowerAction.lock); }
+                    }
+                    Tile {
+                        icon: "\u{E708}";
+                        label: "Sleep";
+                        clicked => { root.press(1, PowerAction.sleep); }
+                    }
+                    Tile {
+                        icon: "\u{F3B1}";
+                        label: "Sign out";
+                        danger: true;
+                        armed: root.armed == 2;
+                    armed-at: root.armed-at;
+                        clicked => { root.press(2, PowerAction.sign-out); }
+                    }
+                }
+                Row {
+                    Tile {
+                        icon: "\u{E777}";
+                        label: "Restart";
+                        danger: true;
+                        armed: root.armed == 3;
+                    armed-at: root.armed-at;
+                        clicked => { root.press(3, PowerAction.restart); }
+                    }
+                    Tile {
+                        icon: "\u{E7E8}";
+                        label: "Shut down";
+                        danger: true;
+                        armed: root.armed == 4;
+                    armed-at: root.armed-at;
+                        clicked => { root.press(4, PowerAction.shutdown); }
+                    }
+                    Tile {
+                        icon: "\u{E9F3}";
+                        label: "Hibernate";
+                        danger: true;
+                        enabled: root.can-hibernate;
+                        armed: root.armed == 5;
+                    armed-at: root.armed-at;
+                        clicked => { root.press(5, PowerAction.hibernate); }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.surface;
+            }
+
+            // ---- footer ----
+            HorizontalLayout {
+                spacing: 8px;
+                FooterButton {
+                    icon: "\u{E713}";
+                    label: "Bar settings";
+                    clicked => { root.open-settings(); }
+                }
+                FooterButton {
+                    icon: "\u{E711}";
+                    label: "Quit bar";
+                    clicked => { root.quit-bar(); }
+                }
+            }
+        }
+    }
+}

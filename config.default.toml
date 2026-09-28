@@ -1,0 +1,105 @@
+# massier87shell configuration
+# This file is hot-reloaded: save it and the bar updates within a second.
+# Most of it can also be changed from the settings window: the gear in the quick-settings
+# panel (control module), the settings module, or right-click the launcher module.
+
+[bar]
+position = "top"        # "top" or "bottom"
+height = 26             # logical pixels (scaled by your display DPI)
+floating = false        # detach from the screen edge, like Noctalia/DMS
+margin = 0              # gap around a floating bar
+corners = "square"      # "round", "small" or "square" (Windows 11 DWM corners)
+border = false          # thin 1px window border in the theme's hover color
+font = "Segoe UI Variable Text"
+font_size = 11
+spacing = 4             # gap between pills
+padding = 0             # vertical gap between the bar edge and the pills
+edge_padding = 3        # horizontal gap at the left/right ends
+pill_radius = 5
+pill_background = false # false = borderless, text-only modules
+# "software" redraws only changed pixels: lightest by far for a thin bar (~30 MB RAM).
+# "skia" (Direct3D/wgpu) and "femtovg" (OpenGL) are GPU-accelerated but redraw the
+# whole bar each frame and carry ~70-240 MB of driver memory. Needs a restart.
+renderer = "software"
+monitors = "all"        # "primary" or "all" (one bar per display)
+drag_windows = true     # drag empty bar space to move the maximized window below (like its title bar)
+hide_windows_taskbar = true   # hide the Windows taskbar completely (it comes back when the bar exits)
+taskbar_hotkey = "Ctrl+Win+B" # shortcut that turns hide_windows_taskbar on/off ("" = none)
+
+[theme]
+# Presets: "catppuccin-mocha", "tokyo-night", "gruvbox", "nord", "rose-pine",
+#          "material" (DMS-style), "system" (material + your Windows accent color)
+preset = "tokyo-night"
+# Take the accent from the desktop wallpaper (follows it when the wallpaper changes).
+# The accent below is used when the wallpaper has no clear color.
+accent_from_wallpaper = true
+accent = "#cba6f7"
+# Background opacity, 0.0-1.0: the bar, and every other window (settings, control panel,
+# tray, menus, previews; at least 0.4). Below 1, tiles and cards turn translucent too.
+opacity = 0.5
+panel_opacity = 0.5
+# What shows through translucent backgrounds: "none" (clear), "blur" or "acrylic".
+blur = "blur"
+# Any color below overrides the preset. Formats: "#rrggbb" or "#rrggbbaa".
+# background     = "#1e1e2e"
+# surface        = "#313244"
+# surface_hover  = "#45475a"
+# foreground     = "#cdd6f4"
+# foreground_dim = "#a6adc8"
+# on_accent      = "#1e1e2e"
+# urgent         = "#f38ba8"
+
+[modules]
+# Available: launcher, workspaces, taskview, taskbar, window, clock, media, cpu, ram, temp,
+#            tray, control, volume, battery, settings, power
+# Tip: the settings window is also in the quick-settings panel (control module, gear icon).
+left   = ["taskview", "workspaces", "media", "window"]
+center = ["taskbar"]
+right  = ["tray", "cpu", "volume", "clock", "control"]
+
+[clock]
+# chrono strftime syntax: https://docs.rs/chrono/latest/chrono/format/strftime/
+format = "%a %d %b   %l:%M %p"
+
+[window]
+max_width = 143         # focused window title, px
+
+[media]
+max_width = 128         # now-playing title, px
+
+[volume]
+# Click the module for output/input devices and per-app volume; scroll to change volume.
+step = 2                # percent per scroll notch
+
+[taskbar]
+icon_size = 14          # app icon size in px
+monochrome = false      # draw app icons in the theme's text color
+# pinned = [...]        # created the first time you pin, unpin or reorder an app;
+#                         until then the Windows taskbar's pins are used
+
+[temp]
+unit = "C"              # "C" or "F". Shows the NVIDIA GPU temperature (CPU sensors need admin rights).
+
+[stats]
+interval = 3.0          # seconds between CPU / RAM / temperature / battery updates
+
+[tray]
+pinned = []             # tray apps (exe names) shown directly on the bar; pin them from the tray panel
+
+[animations]
+enabled = true
+speed = 0.5             # 0.5 = half speed, 2 = twice as fast
+hover_effects = false   # small hover effects (icons growing)
+
+[taskview]
+trigger = "click"       # "click" or "hover": how the taskview module opens Windows Task View
+hover_delay_ms = 100
+
+[control]
+# Control panel contents (also in Settings → Modules → Control panel → gear).
+# Tiles: wifi, ethernet, bluetooth, airplane, dark_mode, taskbar (hide/show the Windows taskbar),
+#        mute, mic, screenshot, settings, lock, taskmgr, project
+# Wi-Fi, Ethernet and Bluetooth tiles have a ">" button for their network list / details.
+tiles = ["wifi", "ethernet", "bluetooth", "dark_mode", "taskbar", "mute", "mic", "screenshot", "settings", "lock", "taskmgr", "project"]
+# Sections: volume, brightness, media, power (lock, sleep, sign out, restart, shut down, hibernate)
+sections = ["volume", "brightness", "media", "power"]

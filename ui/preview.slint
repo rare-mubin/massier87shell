@@ -1,0 +1,119 @@
+// massier87shell — hover preview for taskbar apps. For running apps it shows each window's
+// title and a live thumbnail (drawn over the "thumb" rects by DWM, the same mechanism the
+// Windows taskbar uses); for pinned apps that aren't running, just a tooltip with the name.
+// Rust lays out the slots (it knows each window's aspect ratio) and sizes the window.
+
+import { Theme } from "bar.slint";
+
+export struct PreviewSlot {
+    x: length,
+    y: length,
+    w: length,
+    h: length,   // thumbnail height (the title row sits above it)
+    title: string,
+    icon: image,
+    live: bool,  // false for minimized windows: DWM has no picture, show the icon
+}
+
+component Glyph inherits Text {
+    font-family: Theme.icon-font;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+export component PreviewWindow inherits Window {
+    title: "massier87shell — Preview";
+    no-frame: true;
+    always-on-top: true;
+    background: Theme.background.with-alpha(Theme.glass);
+
+    in property <string> app-name;
+    in property <[PreviewSlot]> slots;
+    in property <length> content-w;
+    in property <length> content-h;
+    in-out property <bool> open;
+    width: root.slots.length == 0 ? tip.preferred-width + 24px : root.content-w;
+    height: root.slots.length == 0 ? 32px : root.content-h;
+
+    // (hovered) so Rust can keep the preview open while the mouse is on it.
+    callback hovered(bool);
+    callback activate(int);
+    callback close-window(int);
+
+    TouchArea {
+        changed has-hover => { root.hovered(self.has-hover); }
+    }
+
+    Rectangle {
+        opacity: root.open ? 1 : 0;
+        animate opacity { duration: 140ms * Theme.motion; }
+
+        tip := Text {
+            visible: root.slots.length == 0;
+            text: root.app-name;
+            font-family: Theme.font-family;
+            font-size: 12px;
+            color: Theme.foreground;
+        }
+
+        for s[i] in root.slots: Rectangle {
+            x: s.x;
+            y: s.y;
+            width: s.w;
+            height: s.h + 26px;
+            border-radius: 10px;
+            background: slot-ta.has-hover ? Theme.surface-hover : Theme.surface;
+            animate background { duration: 120ms * Theme.motion; }
+            slot-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.activate(i); }
+                changed has-hover => { root.hovered(self.has-hover); }
+            }
+            HorizontalLayout {
+                y: 0;
+                height: 26px;
+                padding-left: 8px;
+                padding-right: 2px;
+                spacing: 6px;
+                Text {
+                    text: s.title;
+                    font-family: Theme.font-family;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    color: Theme.foreground;
+                }
+                close := Rectangle {
+                    width: 24px;
+                    border-radius: 6px;
+                    background: close-ta.has-hover ? #c42b1c : transparent;
+                    opacity: slot-ta.has-hover || close-ta.has-hover ? 1 : 0;
+                    animate opacity, background { duration: 120ms * Theme.motion; }
+                    Glyph {
+                        text: "\u{E8BB}";
+                        font-size: 9px;
+                        color: close-ta.has-hover ? #ffffff : Theme.foreground;
+                    }
+                    close-ta := TouchArea {
+                        clicked => { root.close-window(i); }
+                        changed has-hover => { root.hovered(self.has-hover); }
+                    }
+                }
+            }
+            // Where DWM draws the live thumbnail (or the icon for a minimized window).
+            Rectangle {
+                y: 26px;
+                height: s.h;
+                border-radius: 6px;
+                background: Theme.background.with-alpha(0.5);
+                if !s.live: Image {
+                    source: s.icon;
+                    width: 40px;
+                    height: 40px;
+                    image-rendering: smooth;
+                }
+            }
+        }
+    }
+}

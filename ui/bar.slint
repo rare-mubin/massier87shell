@@ -1,0 +1,625 @@
+// massier87shell — the bar UI.
+// Every color/size comes from the `Theme` global, which Rust fills from config.toml.
+// Every live value comes from the `Sys` global, which Rust updates on timers.
+
+// One icon in the "taskbar" module: a pinned and/or running app.
+export struct AppItem {
+    icon: image,
+    running: bool,
+    focused: bool,
+    windows: int,
+}
+
+// One tray (notification area) icon.
+export struct TrayItem {
+    id: int,
+    icon: image,
+    name: string,
+    pinned: bool,
+}
+
+export global Theme {
+    in property <color> background: #1e1e2e;
+    in property <color> surface: #313244;
+    in property <color> surface-hover: #45475a;
+    in property <color> foreground: #cdd6f4;
+    in property <color> foreground-dim: #a6adc8;
+    in property <color> accent: #cba6f7;
+    in property <color> on-accent: #1e1e2e;
+    in property <color> urgent: #f38ba8;
+    // This window's background opacity, 0..1 (below 1 the desktop shows through, maybe blurred).
+    in property <float> glass: 1;
+    // The surface color, never translucent: for dropdowns drawn over other content.
+    in property <color> surface-solid: #313244;
+
+    in property <string> font-family: "Segoe UI Variable Text";
+    in property <length> font-size: 13px;
+    in property <length> pill-radius: 10px;
+    in property <length> spacing: 6px;
+    in property <length> padding: 5px;
+    in property <length> edge-padding: 6px;
+    in property <length> window-max-width: 380px;
+    in property <length> media-max-width: 240px;
+    in property <bool> pill-background: true;
+    in property <length> app-icon-size: 20px;
+    in property <length> bar-height: 40px;
+    // Animation speed: 1 = normal, 0.5 = twice as fast, 0 = no animations.
+    in property <float> motion: 1;
+    // Small hover effects (icons growing, etc.).
+    in property <bool> hover-effects: true;
+
+    out property <string> icon-font: "Segoe Fluent Icons";
+}
+
+export global Sys {
+    in property <string> clock;
+    in property <string> window-title;
+    in property <int> desktop-count: 1;
+    in property <int> desktop-current: 0;
+    in property <float> cpu;
+    in property <float> ram;
+    in property <float> volume;
+    in property <bool> muted;
+    in property <bool> has-audio;
+    in property <bool> has-battery;
+    in property <float> battery;
+    in property <bool> charging;
+    in property <bool> has-temp;
+    in property <float> temp; // celsius
+    in property <string> temp-text;
+    in property <string> temp-source;
+    in-out property <bool> media-active;
+    in-out property <bool> media-playing;
+    in property <string> media-title;
+    in property <string> media-artist;
+    in property <[AppItem]> apps;
+    in property <[TrayItem]> tray-pinned;
+    in property <int> tray-count;
+
+    callback launcher-clicked();
+    callback settings-clicked();
+    callback taskview-clicked();
+    callback control-clicked();
+    callback taskview-hover(bool);
+    // Dragging empty bar space moves the maximized window below (see Bar).
+    callback bar-drag-begin() -> bool;
+    callback bar-drag-move();
+    callback bar-drag-end();
+    callback app-clicked(int);
+    callback app-middle-clicked(int);
+    callback app-moved(int, int); // (from, to) drag-to-reorder
+    callback app-context(int);    // right click
+    callback app-hover(int, bool, length); // (index, hovered, icon center x in the bar)
+    callback tray-activate(int, bool); // (id, right button)
+    callback tray-open();
+    callback desktop-clicked(int);
+    callback desktop-scrolled(int);
+    callback clock-clicked();
+    callback stats-clicked();
+    callback volume-clicked();
+    callback volume-right-clicked();
+    callback volume-scrolled(int);
+    callback media-prev();
+    callback media-toggle();
+    callback media-next();
+    callback power-clicked();
+    callback power-right-clicked();
+}
+
+component Label inherits Text {
+    color: Theme.foreground;
+    font-size: Theme.font-size;
+    font-family: Theme.font-family;
+    vertical-alignment: center;
+}
+
+component Icon inherits Text {
+    color: Theme.foreground;
+    font-size: Theme.font-size * 1.15;
+    font-family: Theme.icon-font;
+    vertical-alignment: center;
+    horizontal-alignment: center;
+}
+
+// The rounded "pill" every module lives in.
+component Pill inherits Rectangle {
+    in property <bool> interactive: true;
+    // Needs mouse input even when not clickable (scrolling). Otherwise a non-interactive
+    // pill lets presses through, so dragging it moves the window like empty bar space.
+    in property <bool> scrollable: false;
+    in property <length> pad: 10px;
+    in property <length> gap: 7px;
+    callback clicked();
+    callback right-clicked();
+    callback scrolled(int);
+    callback hover-changed(bool);
+
+    border-radius: Theme.pill-radius;
+    background: !Theme.pill-background ? transparent
+        : (ta.has-hover && root.interactive ? Theme.surface-hover : Theme.surface);
+    animate background { duration: 180ms * Theme.motion; easing: ease-out; }
+
+    ta := TouchArea {
+        enabled: root.interactive || root.scrollable;
+        changed has-hover => { root.hover-changed(self.has-hover); }
+        mouse-cursor: root.interactive ? MouseCursor.pointer : MouseCursor.default;
+        clicked => { root.clicked(); }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.right) {
+                root.right-clicked();
+            }
+        }
+        scroll-event(e) => {
+            if (e.delta-y > 0) { root.scrolled(1); }
+            else if (e.delta-y < 0) { root.scrolled(-1); }
+            return accept;
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: root.pad;
+        padding-right: root.pad;
+        spacing: root.gap;
+        // Keeps content grouped in the middle when a pill is wider than its content.
+        alignment: center;
+        @children
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> icon;
+    callback clicked();
+    width: 24px;
+    border-radius: 6px;
+    background: ta.pressed ? Theme.accent.with-alpha(0.35)
+        : ta.has-hover ? Theme.foreground.with-alpha(0.12) : transparent;
+    animate background { duration: 120ms * Theme.motion; }
+    Icon {
+        width: parent.width;
+        height: parent.height;
+        text: root.icon;
+        color: ta.has-hover ? Theme.accent : Theme.foreground;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component WindowsLogo inherits Rectangle {
+    width: 15px;
+    property <length> gap: 1.5px;
+    property <length> cell: (15px - self.gap) / 2;
+    property <color> tint: Theme.accent;
+    for i in 4: Rectangle {
+        x: mod(i, 2) * (root.cell + root.gap);
+        y: (parent.height - 15px) / 2 + floor(i / 2) * (root.cell + root.gap);
+        width: root.cell;
+        height: root.cell;
+        border-radius: 1.5px;
+        background: root.tint;
+    }
+}
+
+component BatteryGlyph inherits Rectangle {
+    width: 25px;
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 22px;
+        height: 12px;
+        border-radius: 3.5px;
+        border-width: 1.5px;
+        border-color: Theme.foreground-dim;
+        Rectangle {
+            x: 2.5px;
+            y: 2.5px;
+            height: parent.height - 5px;
+            width: (parent.width - 5px) * clamp(Sys.battery, 0, 100) / 100;
+            border-radius: 1.5px;
+            background: Sys.charging ? Theme.accent
+                : Sys.battery <= 20 ? Theme.urgent : Theme.foreground;
+            animate width { duration: 400ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+        }
+    }
+    Rectangle {
+        x: 23px;
+        y: (parent.height - self.height) / 2;
+        width: 2px;
+        height: 5px;
+        border-radius: 1px;
+        background: Theme.foreground-dim;
+    }
+}
+
+// Picks the widget for a module name listed in config.toml.
+component Module {
+    in property <string> name;
+
+    HorizontalLayout {
+        if root.name == "launcher": Pill {
+            clicked => { Sys.launcher-clicked(); }
+            right-clicked => { Sys.settings-clicked(); }
+            WindowsLogo { }
+        }
+
+        if root.name == "workspaces": Pill {
+            interactive: false;
+            scrollable: true;
+            scrolled(d) => { Sys.desktop-scrolled(-d); }
+            for i in Sys.desktop-count: Rectangle {
+                property <bool> active: i == Sys.desktop-current;
+                width: self.active ? 26px : 10px;
+                animate width { duration: 350ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    width: parent.width;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: parent.active ? Theme.accent
+                        : dot-ta.has-hover ? Theme.foreground-dim
+                        : Theme.foreground.with-alpha(0.25);
+                    animate background { duration: 200ms * Theme.motion; }
+                }
+                dot-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Sys.desktop-clicked(i); }
+                }
+            }
+        }
+
+        if root.name == "taskbar" && Sys.apps.length > 0: tb := Pill {
+            interactive: false;
+            pad: 4px;
+            gap: 2px;
+            // Drag-to-reorder: the dragged icon follows the pointer, the others slide aside.
+            property <length> icon: min(Theme.app-icon-size, Theme.bar-height - 4px);
+            property <length> slot: self.icon + 12px + 2px; // item width + gap
+            property <int> dragging: -1;
+            property <length> drag-dx;
+            property <int> target: clamp(round((self.dragging * self.slot + self.drag-dx) / self.slot), 0, Sys.apps.length - 1);
+
+            for app[i] in Sys.apps: Rectangle {
+                width: tb.icon + 12px;
+                z: i == tb.dragging ? 10 : 0;
+                // This item's position with the dragged one taken out, then with the gap opened.
+                property <int> rest: i < tb.dragging ? i : i - 1;
+                property <int> shown-at: tb.dragging < 0 || i == tb.dragging ? i
+                    : (self.rest < tb.target ? self.rest : self.rest + 1);
+
+                content := Rectangle {
+                    x: i == tb.dragging ? tb.drag-dx : (parent.shown-at - i) * tb.slot;
+                    width: parent.width;
+                    height: parent.height;
+                    animate x { duration: i == tb.dragging ? 0ms : 220ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+                    border-radius: Theme.pill-radius - 3px;
+                    background: i == tb.dragging ? Theme.surface-hover
+                        : app-ta.pressed ? Theme.surface-hover.darker(0.1)
+                        : app-ta.has-hover ? Theme.surface-hover : transparent;
+                    animate background { duration: 120ms * Theme.motion; }
+                    Image {
+                        source: app.icon;
+                        // Grows a little on hover. Capped to the bar (not the pill).
+                        property <length> size: Theme.hover-effects && app-ta.has-hover && !app-ta.pressed ? tb.icon + 2px : tb.icon;
+                        width: self.size;
+                        height: self.size;
+                        animate width, height { duration: 140ms * Theme.motion; easing: ease-out; }
+                        // Whole-pixel positions: a half-pixel offset would blur the icon.
+                        x: round((parent.width - self.width) / 2 / 1px) * 1px;
+                        y: round((parent.height - self.height) / 2 / 1px) * 1px - 1px;
+                        image-rendering: smooth;
+                        opacity: app.running ? 1 : 0.75;
+                    }
+                    // DMS-style indicator: dot = open, wide accent bar = focused
+                    Rectangle {
+                        y: parent.height - 4px;
+                        height: 3px;
+                        width: app.focused ? 14px : app.running ? (app.windows > 1 ? 9px : 4px) : 0px;
+                        x: (parent.width - self.width) / 2;
+                        border-radius: 1.5px;
+                        background: app.focused ? Theme.accent : Theme.foreground-dim;
+                        animate width { duration: 250ms * Theme.motion; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+                    }
+                }
+
+                app-ta := TouchArea {
+                    property <length> press-x;
+                    property <bool> dragged;
+                    mouse-cursor: tb.dragging == i ? MouseCursor.grabbing : MouseCursor.pointer;
+                    changed has-hover => {
+                        Sys.app-hover(i, self.has-hover && tb.dragging < 0, self.absolute-position.x + self.width / 2);
+                    }
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            self.press-x = self.mouse-x;
+                            self.dragged = false;
+                        } else if (e.kind == PointerEventKind.up) {
+                            if (e.button == PointerEventButton.left) {
+                                if (tb.dragging == i) {
+                                    let to = tb.target;
+                                    tb.dragging = -1;
+                                    tb.drag-dx = 0;
+                                    if (to != i) { Sys.app-moved(i, to); }
+                                } else if (!self.dragged) {
+                                    Sys.app-clicked(i);
+                                }
+                            }
+                            if (e.button == PointerEventButton.middle) { Sys.app-middle-clicked(i); }
+                            if (e.button == PointerEventButton.right) { Sys.app-context(i); }
+                        }
+                    }
+                    moved => {
+                        if (!self.pressed) {
+                            return;
+                        }
+                        if (!self.dragged && abs(self.mouse-x - self.press-x) > 6px) {
+                            self.dragged = true;
+                            tb.dragging = i;
+                            Sys.app-hover(i, false, 0); // no preview while dragging
+                        }
+                        if (tb.dragging == i) {
+                            tb.drag-dx = clamp(self.mouse-x - self.press-x, -i * tb.slot, (Sys.apps.length - 1 - i) * tb.slot);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pinned tray icons, plus a button that opens the full list of background apps.
+        if root.name == "tray": Pill {
+            interactive: false;
+            pad: 4px;
+            gap: 2px;
+            for item in Sys.tray-pinned: Rectangle {
+                width: 26px;
+                border-radius: Theme.pill-radius - 3px;
+                background: tray-ta.pressed ? Theme.surface-hover.darker(0.1)
+                    : tray-ta.has-hover ? Theme.surface-hover : transparent;
+                animate background { duration: 120ms * Theme.motion; }
+                Image {
+                    source: item.icon;
+                    width: 16px;
+                    height: 16px;
+                    x: round((parent.width - self.width) / 2 / 1px) * 1px;
+                    y: round((parent.height - self.height) / 2 / 1px) * 1px;
+                    image-rendering: smooth;
+                }
+                tray-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.up) {
+                            if (e.button == PointerEventButton.left) { Sys.tray-activate(item.id, false); }
+                            if (e.button == PointerEventButton.right) { Sys.tray-activate(item.id, true); }
+                        }
+                    }
+                }
+            }
+            IconButton {
+                icon: "\u{E70D}";
+                clicked => { Sys.tray-open(); }
+            }
+        }
+
+        if root.name == "window" && Sys.window-title != "": Pill {
+            interactive: false;
+            Label {
+                text: Sys.window-title;
+                max-width: Theme.window-max-width;
+                overflow: elide;
+                color: Theme.foreground-dim;
+            }
+        }
+
+        if root.name == "clock": Pill {
+            clicked => { Sys.clock-clicked(); }
+            Label {
+                text: Sys.clock;
+                font-weight: 600;
+            }
+        }
+
+        if root.name == "media" && Sys.media-active: Pill {
+            interactive: false;
+            Icon {
+                text: "\u{E8D6}";
+                color: Theme.accent;
+            }
+            Label {
+                text: Sys.media-artist == "" ? Sys.media-title
+                    : Sys.media-title + "  ·  " + Sys.media-artist;
+                max-width: Theme.media-max-width;
+                overflow: elide;
+            }
+            IconButton {
+                icon: "\u{E892}";
+                clicked => { Sys.media-prev(); }
+            }
+            IconButton {
+                icon: Sys.media-playing ? "\u{E769}" : "\u{E768}";
+                clicked => { Sys.media-toggle(); }
+            }
+            IconButton {
+                icon: "\u{E893}";
+                clicked => { Sys.media-next(); }
+            }
+        }
+
+        if root.name == "cpu": Pill {
+            min-width: Theme.font-size * 5.6; // fits "100%" so the pill keeps its size
+            clicked => { Sys.stats-clicked(); }
+            Icon {
+                text: "\u{E950}";
+                color: Theme.accent;
+            }
+            Label {
+                text: "\{round(Sys.cpu)}%";
+                color: Sys.cpu >= 90 ? Theme.urgent : Theme.foreground;
+            }
+        }
+
+        if root.name == "ram": Pill {
+            min-width: Theme.font-size * 5.6;
+            clicked => { Sys.stats-clicked(); }
+            Icon {
+                text: "\u{E964}";
+                color: Theme.accent;
+            }
+            Label {
+                text: "\{round(Sys.ram)}%";
+                color: Sys.ram >= 90 ? Theme.urgent : Theme.foreground;
+            }
+        }
+
+        if root.name == "temp" && Sys.has-temp: Pill {
+            clicked => { Sys.stats-clicked(); }
+            Icon {
+                text: "\u{E9CA}";
+                color: Sys.temp >= 85 ? Theme.urgent : Theme.accent;
+            }
+            Label {
+                text: Sys.temp-text;
+                color: Sys.temp >= 85 ? Theme.urgent : Theme.foreground;
+            }
+            Label {
+                text: Sys.temp-source;
+                font-size: Theme.font-size * 0.8;
+                color: Theme.foreground-dim;
+            }
+        }
+
+        if root.name == "volume" && Sys.has-audio: Pill {
+            min-width: Theme.font-size * 5.6;
+            clicked => { Sys.volume-clicked(); }
+            right-clicked => { Sys.volume-right-clicked(); }
+            scrolled(d) => { Sys.volume-scrolled(d); }
+            Icon {
+                text: Sys.muted ? "\u{E74F}"
+                    : Sys.volume < 1 ? "\u{E992}"
+                    : Sys.volume < 34 ? "\u{E993}"
+                    : Sys.volume < 67 ? "\u{E994}" : "\u{E995}";
+                color: Sys.muted ? Theme.urgent : Theme.foreground;
+            }
+            Label {
+                text: "\{round(Sys.volume)}%";
+                color: Sys.muted ? Theme.foreground-dim : Theme.foreground;
+            }
+        }
+
+        if root.name == "battery" && Sys.has-battery: Pill {
+            interactive: false;
+            BatteryGlyph { }
+            if Sys.charging: Icon {
+                text: "\u{E945}";
+                color: Theme.accent;
+                font-size: Theme.font-size * 0.9;
+            }
+            Label { text: "\{round(Sys.battery)}%"; }
+        }
+
+        // Opens the control panel (quick settings).
+        if root.name == "control": Pill {
+            clicked => { Sys.control-clicked(); }
+            Icon { text: "\u{E9E9}"; }
+        }
+
+        // Opens Windows Task View on click, or after hovering (see [taskview] in the config).
+        if root.name == "taskview": Pill {
+            clicked => { Sys.taskview-clicked(); }
+            hover-changed(h) => { Sys.taskview-hover(h); }
+            Icon { text: "\u{E7C4}"; }
+        }
+
+        if root.name == "settings": Pill {
+            clicked => { Sys.settings-clicked(); }
+            Icon { text: "\u{E713}"; }
+        }
+
+        if root.name == "power": Pill {
+            clicked => { Sys.power-clicked(); }
+            right-clicked => { Sys.power-right-clicked(); }
+            Icon {
+                text: "\u{E7E8}";
+                color: Theme.urgent;
+            }
+        }
+    }
+}
+
+export component Bar inherits Window {
+    in property <[string]> left-modules: ["launcher", "workspaces", "window"];
+    in property <[string]> center-modules: ["clock"];
+    in property <[string]> right-modules: ["media", "cpu", "ram", "volume", "battery", "power"];
+
+    title: "massier87shell";
+    no-frame: true;
+    always-on-top: true;
+    background: Theme.background.with-alpha(Theme.glass);
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-size;
+    preferred-width: 1600px;
+    preferred-height: 40px;
+
+    // Empty bar space acts as the title bar of the maximized window below: dragging it
+    // pulls that window out of maximized. Declared first so every module sits on top.
+    TouchArea {
+        property <length> press-x;
+        property <length> press-y;
+        property <bool> started;
+        pointer-event(e) => {
+            if (e.button != PointerEventButton.left) {
+                return;
+            }
+            if (e.kind == PointerEventKind.down) {
+                self.press-x = self.mouse-x;
+                self.press-y = self.mouse-y;
+                self.started = false;
+            } else if (e.kind == PointerEventKind.up && self.started) {
+                self.started = false;
+                Sys.bar-drag-end();
+            }
+        }
+        // The bar keeps the mouse while the button is held, so moves keep arriving even
+        // after the cursor leaves the bar.
+        moved => {
+            if (!self.pressed) {
+                return;
+            }
+            if (self.started) {
+                Sys.bar-drag-move();
+            } else if (abs(self.mouse-x - self.press-x) > 4px || abs(self.mouse-y - self.press-y) > 4px) {
+                // Only a real drag (a few px), so a plain click doesn't do anything.
+                self.started = Sys.bar-drag-begin();
+            }
+        }
+    }
+
+    left := HorizontalLayout {
+        x: Theme.edge-padding;
+        width: self.preferred-width;
+        height: parent.height;
+        padding-top: Theme.padding;
+        padding-bottom: Theme.padding;
+        spacing: Theme.spacing;
+        for m in root.left-modules: Module { name: m; }
+    }
+
+    center := HorizontalLayout {
+        x: (parent.width - self.width) / 2;
+        width: self.preferred-width;
+        height: parent.height;
+        padding-top: Theme.padding;
+        padding-bottom: Theme.padding;
+        spacing: Theme.spacing;
+        for m in root.center-modules: Module { name: m; }
+    }
+
+    right := HorizontalLayout {
+        x: parent.width - self.width - Theme.edge-padding;
+        width: self.preferred-width;
+        height: parent.height;
+        padding-top: Theme.padding;
+        padding-bottom: Theme.padding;
+        spacing: Theme.spacing;
+        for m in root.right-modules: Module { name: m; }
+    }
+}
